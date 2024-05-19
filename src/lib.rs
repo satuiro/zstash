@@ -1,12 +1,18 @@
 use std::{fs::File, io::{Read, Write}, vec};
-
+use sha2::Sha256;
+use pbkdf2::pbkdf2_hmac;
+use rand::Rng;
 use anyhow::{Context, Result};
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng, Result as aes_Result}, Aes256Gcm, Key, Nonce // Or `Aes128Gcm`
+    aead::{Aead, AeadCore, KeyInit, OsRng}, Aes256Gcm, Nonce // Or `Aes128Gcm`
 };
 // TODO: replace with some actual generated key stored in OS for secure storage
-const KEY: [u8; 32] = [0; 32];
+const SALT_LEN: usize = 16;
+const ITERATIONS: u32 = 100_000;
+const KEY_LEN: usize = 32;
+const PASSWORD_FILE: &str = "password_salt.bin";
 
+// TODO: Add the feature for deleting the file
 pub fn delete_file(file: &str) {
     println!("File being deleted {file}");
 }
@@ -27,7 +33,7 @@ pub fn encrypt_file(file: &str) -> Result<()> {
         }
     };
 
-    let mut output_file = File::create("encrypted_file.bin")
+    let mut output_file = File::create("encrypted_file.bin.zstash")
         .with_context(|| "could not create output file")?;
 
     output_file.write_all(&encrypted_data.0)
@@ -53,13 +59,14 @@ pub fn decrypt_file(file: &str) -> Result<()> {
     input_file.read_to_end(&mut encrypted_data)
         .with_context(|| "could not read encrypted data from file")?;
 
-    println!("Encrypted data is {:?}", encrypted_data);
+    // println!("Encrypted data is {:?}", encrypted_data);
     
     let decrypted_data = match decrypt(&nonce, &encrypted_data) {
         Ok(decrypted) => {
             decrypted
         }
-        Err(_err) => {
+        Err(err) => {
+            eprintln!("{}", err);
             vec![0u8, 32]
         }
     };
@@ -68,10 +75,10 @@ pub fn decrypt_file(file: &str) -> Result<()> {
     Ok(())
 }
 
-fn encrypt(data: &[u8]) -> aes_Result<(Vec<u8>, Vec<u8>)> {
+fn encrypt(data: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     // Generate a random 256-bit key (32 bytes)
-    let key = Key::<Aes256Gcm>::from_slice(&KEY);
-    let cipher = Aes256Gcm::new(&key);
+    let (_salt, key) = load_password_data()?;
+    let cipher = Aes256Gcm::new((&key).into());
 
     // Generate a random nonce (12 bytes)
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
@@ -91,15 +98,57 @@ fn encrypt(data: &[u8]) -> aes_Result<(Vec<u8>, Vec<u8>)> {
     Ok((nonce.to_vec(),encrypted_data))
 }
 
-fn decrypt(nonce: &[u8], encrypted_data: &[u8]) -> aes_Result<Vec<u8>> {
-    // Generate a random 256-bit key (32 bytes)
-    let key = Key::<Aes256Gcm>::from_slice(&KEY);
-    let cipher = Aes256Gcm::new(&key);
+fn decrypt(nonce: &[u8], encrypted_data: &[u8]) -> Result<Vec<u8>> {
+    let (_salt, key) = load_password_data()?;
+    let cipher = Aes256Gcm::new((&key).into());
 
     // Decrypt the data
-    let decrypted_data = cipher.decrypt(Nonce::from_slice(nonce), encrypted_data);
+    let decrypted_data = match cipher.decrypt(Nonce::from_slice(nonce), encrypted_data) {
+        Ok(decrypted) => {
+            decrypted
+        }
+        Err(_err) => {
+            vec![0u8, 32]
+        }
+    };
 
     println!("Decrypted data: {:?}", decrypted_data);
 
-    Ok(decrypted_data?)
+    Ok(decrypted_data)
+}
+
+pub fn set_password(password: &str) -> Result<()> {
+    let salt = generate_salt();
+    let key = derive_key(password.as_bytes(), &salt);
+    store_password_data(&salt, &key)?;
+    println!("Password has been set successfully {}", password);
+    Ok(())
+}
+
+fn generate_salt() -> [u8; SALT_LEN] {
+    let mut salt = [0u8; SALT_LEN];
+    let _ = rand::thread_rng().try_fill(&mut salt);
+    salt
+}
+
+fn derive_key(password: &[u8], salt: &[u8]) -> [u8; KEY_LEN] {
+    let mut key = [0u8; KEY_LEN];
+    pbkdf2_hmac::<Sha256>(password, salt, ITERATIONS, &mut key);
+    key
+}
+
+fn store_password_data(salt: &[u8], key: &[u8]) -> Result<()> {
+    let mut file = File::create(PASSWORD_FILE)?;
+    file.write_all(salt)?;
+    file.write_all(key)?;
+    Ok(())
+}
+
+fn load_password_data() -> Result<([u8; SALT_LEN], [u8; KEY_LEN])> {
+    let mut file = File::open(PASSWORD_FILE)?;
+    let mut salt = [0u8; SALT_LEN];
+    let mut key = [0u8; KEY_LEN];
+    file.read_exact(&mut salt)?;
+    file.read_exact(&mut key)?;
+    Ok((salt, key))
 }
