@@ -1,5 +1,2 @@
 /target
-/decrypted_file.txt
-/encrypted_file.bin.zstash
-/sample.txt
-/password_salt.bin
+/decrypted_sample.txt

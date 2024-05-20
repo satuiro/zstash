@@ -1,7 +1,14 @@
+use std::fs::create_dir_all;
+
+use anyhow::Context;
 use clap::{Arg, Command};
 // use color_eyre::eyre::{Ok, Result};
 
 fn main() {
+    // ensure that the directory for storage exists
+    let secure_dir = zstash::get_secure_dir();
+    let _ = create_dir_all(&secure_dir).with_context(|| "Could not create a secure directory");
+
     let matches = Command::new("zstash")
         .version("1.0")
         .author("Satuiro")
