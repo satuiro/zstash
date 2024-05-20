@@ -34,13 +34,6 @@ fn main() {
                     .required(true)
                     .index(1)),
         )
-        .subcommand(
-            Command::new("set-password")
-                .about("Create a new password for authentication")
-                .arg(Arg::new("password")
-                    .required(true)
-                    .index(1)),
-        )
         .get_matches();
 
     // handle the matches for appropriate function 
@@ -56,10 +49,6 @@ fn main() {
         Some(("delete", sub_m)) => {
             let file = sub_m.get_one::<String>("file").expect("required argument");
             zstash::delete_file(file);
-        },
-        Some(("set-password", sub_m)) => {
-            let password = sub_m.get_one::<String>("password").expect("required argument");
-            let _ = zstash::set_password(&password);
         },
         _ => eprintln!("Invalid command. Use --help for more information."),
     }

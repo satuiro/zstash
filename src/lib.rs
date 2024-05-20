@@ -1,13 +1,19 @@
-use std::{fs::File, io::{Read, Write}, path::PathBuf, vec};
+use aes_gcm::{
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+    Aes256Gcm, Nonce,
+};
+use anyhow::{Context, Result};
 use dirs::home_dir;
-use sha2::Sha256;
 use pbkdf2::pbkdf2_hmac;
 use rand::Rng;
-use anyhow::{Context, Result};
-use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng}, Aes256Gcm, Nonce // Or `Aes128Gcm`
+use sha2::Sha256;
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
+    vec,
 };
-// TODO: replace with some actual generated key stored in OS for secure storage
+
 const SALT_LEN: usize = 16;
 const ITERATIONS: u32 = 100_000;
 const KEY_LEN: usize = 32;
@@ -20,7 +26,7 @@ pub fn get_secure_dir() -> PathBuf {
     path
 }
 
-pub fn set_password(password: &str) -> Result<()> {
+fn set_password(password: &str) -> Result<()> {
     let salt = generate_salt();
     let key = derive_key(password.as_bytes(), &salt);
     store_password_data(&salt, &key)?;
@@ -62,6 +68,28 @@ fn load_password_data() -> Result<([u8; SALT_LEN], [u8; KEY_LEN])> {
     Ok((salt, key))
 }
 
+fn verify_password(password: &str) -> Result<()> {
+    let (salt, stored_key) = load_password_data()?;
+    let derived_key = derive_key(password.as_bytes(), &salt);
+    if stored_key == derived_key {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Password verification failed"))
+    }
+}
+
+fn password_file_exists() -> bool {
+    let mut path = get_secure_dir();
+    path.push(PASSWORD_FILE);
+    path.exists()
+}
+
+fn prompt_password(prompt: &str) -> String {
+    println!("{}", prompt);
+    let password = rpassword::read_password().unwrap();
+    password
+}
+
 // TODO: Add the feature for deleting the file
 pub fn delete_file(file: &str) {
     println!("File being deleted {file}");
@@ -69,72 +97,104 @@ pub fn delete_file(file: &str) {
 
 pub fn encrypt_file(file: &str) -> Result<()> {
     println!("File being encrypted {file}");
-    let content = std::fs::read_to_string(file)
-        .with_context(|| format!("could not read file `{}`", file))?;
 
-    println!("{}", content.as_bytes().len());
+    if !password_file_exists() {
+        println!("Password not set. Please set a password:");
+        let password = prompt_password("Enter a new password: ");
+        let _ = set_password(&password)?;
+    }
 
-    let encrypted_data = match encrypt(content.as_bytes()) {
-        Ok(encrypted) => {
-            encrypted
+    for _ in 0..3 {
+        let password = prompt_password("Enter the password: ");
+        if verify_password(&password).is_ok() {
+            let content = std::fs::read_to_string(file)
+                .with_context(|| format!("could not read file `{}`", file))?;
+
+            // println!("{}", content.as_bytes().len());
+
+            let encrypted_data = match encrypt(content.as_bytes()) {
+                Ok(encrypted) => encrypted,
+                Err(_err) => (vec![0u8, 32], vec![0u8, 32]),
+            };
+
+            let secure_dir = get_secure_dir();
+            let file_name = format!("{}.bin", file);
+            let mut path = secure_dir;
+            path.push(file_name);
+
+            let mut output_file =
+                File::create(path).with_context(|| "could not create output file")?;
+
+            output_file
+                .write_all(&encrypted_data.0)
+                .with_context(|| "could not write nonce to output file")?;
+
+            output_file
+                .write_all(&encrypted_data.1)
+                .with_context(|| "could not write encrypted data to output file")?;
+
+            println!("File encrypted!!");
+            return Ok(());
+        } else {
+            println!("Incorrect password. Try again!");
         }
-        Err(_err) => {
-            (vec![0u8, 32], vec![0u8, 32])
-        }
-    };
+    }
 
-    let secure_dir = get_secure_dir();
-    let file_name = format!("{}.bin", file);
-    let mut path = secure_dir;
-    path.push(file_name);
-
-    let mut output_file = File::create(path)
-        .with_context(|| "could not create output file")?;
-
-    output_file.write_all(&encrypted_data.0)
-        .with_context(|| "could not write nonce to output file")?;
-
-    output_file.write_all(&encrypted_data.1)
-    .with_context(|| "could not write encrypted data to output file")?;
-
-    Ok(())
+    Err(anyhow::anyhow!("Too many incorrect password attempts"))
 }
 
 pub fn decrypt_file(file: &str) -> Result<()> {
     println!("File being decrypted {file}");
 
-    let secure_dir = get_secure_dir();
-    let file_name = format!("{}.bin", file);
-    let mut path = secure_dir;
-    path.push(file_name);
+    if !password_file_exists() {
+        println!("Password not set. Please set a password:");
+        let password = prompt_password("Enter a new password: ");
+        let _ = set_password(&password)?;
+    }
 
-    let mut input_file = File::open(path)
-        .with_context(|| format!("could not open file {}", file))?;
+    for _ in 0..3 {
+        let password = prompt_password("Enter the password: ");
+        if verify_password(&password).is_ok() {
+            let secure_dir = get_secure_dir();
+            let file_name = format!("{}.bin", file);
+            let mut path = secure_dir;
+            path.push(file_name);
 
-    let mut nonce = vec![0u8; 12];
-    input_file.read_exact(&mut nonce)
-        .with_context(|| "could not read nonce from file")?;
-    
-    let mut encrypted_data = Vec::new();
-    input_file.read_to_end(&mut encrypted_data)
-        .with_context(|| "could not read encrypted data from file")?;
+            let mut input_file =
+                File::open(path).with_context(|| format!("could not open file {}", file))?;
 
-    // println!("Encrypted data is {:?}", encrypted_data);
-    
-    let decrypted_data = match decrypt(&nonce, &encrypted_data) {
-        Ok(decrypted) => {
-            decrypted
+            let mut nonce = vec![0u8; 12];
+            input_file
+                .read_exact(&mut nonce)
+                .with_context(|| "could not read nonce from file")?;
+
+            let mut encrypted_data = Vec::new();
+            input_file
+                .read_to_end(&mut encrypted_data)
+                .with_context(|| "could not read encrypted data from file")?;
+
+            // println!("Encrypted data is {:?}", encrypted_data);
+
+            let decrypted_data = match decrypt(&nonce, &encrypted_data) {
+                Ok(decrypted) => decrypted,
+                Err(err) => {
+                    eprintln!("{}", err);
+                    vec![0u8, 32]
+                }
+            };
+
+            let output_file_name = format!("decrypted_{}", file);
+            let _ = std::fs::write(output_file_name, decrypted_data)
+                .with_context(|| "could not write decrypted data to the file");
+
+            println!("File decrypted!!");
+            return Ok(());
+        } else {
+            println!("Incorrect password. Try again!");
         }
-        Err(err) => {
-            eprintln!("{}", err);
-            vec![0u8, 32]
-        }
-    };
+    }
 
-    let output_file_name = format!("decrypted_{}", file);
-    let _ = std::fs::write(output_file_name, decrypted_data)
-        .with_context(|| "could not write decrypted data to the file");
-    Ok(())
+    Err(anyhow::anyhow!("Too many incorrect password attempts"))
 }
 
 fn encrypt(data: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
@@ -146,18 +206,13 @@ fn encrypt(data: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
 
     let encrypted_data = match cipher.encrypt(&nonce, data) {
-        Ok(encrypted) => {
-            encrypted
-        }
+        Ok(encrypted) => encrypted,
         Err(_err) => {
             vec![0u8, 32]
         }
     };
 
-    println!("Nonce: {:?}", nonce);
-    println!("Encrypted data: {:?}", encrypted_data);
-
-    Ok((nonce.to_vec(),encrypted_data))
+    Ok((nonce.to_vec(), encrypted_data))
 }
 
 fn decrypt(nonce: &[u8], encrypted_data: &[u8]) -> Result<Vec<u8>> {
@@ -166,15 +221,11 @@ fn decrypt(nonce: &[u8], encrypted_data: &[u8]) -> Result<Vec<u8>> {
 
     // Decrypt the data
     let decrypted_data = match cipher.decrypt(Nonce::from_slice(nonce), encrypted_data) {
-        Ok(decrypted) => {
-            decrypted
-        }
+        Ok(decrypted) => decrypted,
         Err(_err) => {
             vec![0u8, 32]
         }
     };
-
-    println!("Decrypted data: {:?}", decrypted_data);
 
     Ok(decrypted_data)
 }
