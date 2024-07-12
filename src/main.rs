@@ -9,6 +9,7 @@ fn main() {
     let secure_dir = zstash::get_secure_dir();
     let _ = create_dir_all(&secure_dir).with_context(|| "Could not create a secure directory");
 
+    // create the command line interface using clap
     let matches = Command::new("zstash")
         .version("1.0")
         .author("Satuiro")
@@ -36,7 +37,7 @@ fn main() {
         )
         .get_matches();
 
-    // handle the matches for appropriate function 
+    // handle the matches for appropriate function
     match matches.subcommand() {
         Some(("encrypt", sub_m)) => {
             let file = sub_m.get_one::<String>("file").expect("required argument");
