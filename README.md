@@ -6,17 +6,19 @@
 
 - **File Encryption and Decryption**: Encrypt files with AES-GCM and decrypt them back to their original form.
 - **Password Management**: Set a password that is used to derive the encryption key.
-- **Secure Storage**: Encrypted files are stored in a secure directory within the user's home directory under .zstash_files.
+- **Secure Storage**: Encrypted files are stored in a secure directory within the user home directory under .zstash_files.
 
 ## Installation
 
 1. Clone the repository:
+
    ```sh
    git clone https://github.com/yourusername/zstash.git
    cd zstash
    ```
 
 2. Build the project:
+
    ```sh
    cargo build --release
    ```
@@ -67,3 +69,4 @@ cargo run -- --help
 ```
 
 In case of knowing how to use a particular command just use --help
+
