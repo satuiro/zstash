@@ -74,7 +74,7 @@ fn verify_password(password: &str) -> Result<()> {
     if stored_key == derived_key {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Password verification failed"))
+        Err(anyhow::anyhow!("Password verification failed. Try Again!"))
     }
 }
 
