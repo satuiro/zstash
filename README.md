@@ -70,3 +70,7 @@ cargo run -- --help
 
 In case of knowing how to use a particular command just use --help
 
+## Adding some snippets of the tool
+["1"](./public/demo_1.png "1")
+["2"](./public/demo_2.png "2")
+["3"](./public/demo_3.png "3")
